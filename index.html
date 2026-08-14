@@ -56,6 +56,13 @@
     font-size: 13px; border-radius: 3px;
   }
   .option-btn.active { border-color: #c0392b; color: #fff; background: #201414; }
+
+  #pdf-btn {
+    width: 100%; margin-top: 10px; padding: 12px; background: #c0392b; color: #fff;
+    border: none; font-size: 13px; font-weight: bold; letter-spacing: 0.5px;
+    cursor: pointer; border-radius: 3px;
+  }
+  #pdf-btn:hover { background: #a93226; }
 </style>
 </head>
 <body>
@@ -69,6 +76,7 @@
   <div id="panel">
     <h2>COMPONENTS</h2>
     <div id="groups"></div>
+    <button id="pdf-btn">GET PDF</button>
   </div>
 </div>
 
@@ -76,7 +84,8 @@
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "jspdf": "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.es.min.js"
   }
 }
 </script>
@@ -85,6 +94,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { jsPDF } from 'jspdf';
 
 /* ============================================================
    CONFIG — maps toggle UI to the ACTUAL node names inside your
@@ -141,7 +151,7 @@ const { w, h } = getSize();
 const camera = new THREE.PerspectiveCamera(35, w / h, 0.01, 1000);
 camera.position.set(0.6, 0.25, 0.6);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(w, h);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -290,6 +300,53 @@ function animate() {
   renderer.render(scene, camera);
 }
 animate();
+
+/* ============================================================
+   GET PDF — summarizes the current toggle/select state of every
+   group in TOGGLE_GROUPS, plus a snapshot of the model at
+   whatever angle it's currently rotated to.
+   ============================================================ */
+document.getElementById('pdf-btn').addEventListener('click', () => {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.text('Configuration Summary', 15, y);
+  y += 12;
+
+  // Snapshot of the current 3D view
+  renderer.render(scene, camera); // ensure the frame is fresh right before capture
+  const snapshot = renderer.domElement.toDataURL('image/png');
+  const imgWidth = pageWidth - 30;
+  const imgHeight = imgWidth * (renderer.domElement.height / renderer.domElement.width);
+  doc.addImage(snapshot, 'PNG', 15, y, imgWidth, imgHeight);
+  y += imgHeight + 12;
+
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.text('Selected Components', 15, y);
+  doc.setFont(undefined, 'normal');
+  doc.setFontSize(10);
+  y += 8;
+
+  TOGGLE_GROUPS.forEach(group => {
+    if (y > 280) { doc.addPage(); y = 20; }
+
+    let valueLabel = '';
+    if (group.type === 'toggle') {
+      valueLabel = state[group.id] ? 'On' : 'Off';
+    } else if (group.type === 'select') {
+      const opt = group.options.find(o => o.value === state[group.id]);
+      valueLabel = opt ? opt.label : state[group.id];
+    }
+
+    doc.text(`${group.label}: ${valueLabel}`, 15, y);
+    y += 7;
+  });
+
+  doc.save('configuration-summary.pdf');
+});
 </script>
 
 </body>
