@@ -172,6 +172,10 @@ new GLTFLoader().load(
       if (obj.name) nodeCache[obj.name] = obj;
     });
 
+    // DEBUG: print every real node name found in this model, so mismatches
+    // between TOGGLE_GROUPS config and the actual file can be spotted directly.
+    console.log('Available node names in this model:', Object.keys(nodeCache));
+
     // Center + scale to fit view
     const box = new THREE.Box3().setFromObject(modelRoot);
     const size = box.getSize(new THREE.Vector3());
@@ -290,4 +294,5 @@ animate();
 
 </body>
 </html>
+
 
