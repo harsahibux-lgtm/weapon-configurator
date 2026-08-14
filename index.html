@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Component Configurator</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: Arial, Helvetica, sans-serif; background: #111; }
+
+  #app { display: flex; height: 100vh; }
+
+  #canvas-container { flex: 1; position: relative; background: #1a1a1a; }
+  #loading {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: #888; font-size: 13px; letter-spacing: 1px;
+  }
+  #rotate-hint {
+    position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+    text-align: center; color: #777; font-size: 11px; letter-spacing: 0.5px;
+    pointer-events: none;
+  }
+
+  #panel {
+    width: 300px; min-width: 300px; background: #0c0c0c; color: #eee;
+    border-left: 1px solid #222; padding: 24px 20px; overflow-y: auto;
+  }
+  #panel h2 { font-size: 14px; letter-spacing: 1px; color: #fff; margin: 0 0 20px; }
+
+  .group { margin-bottom: 26px; }
+  .group-label {
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: #888; margin-bottom: 10px;
+  }
+
+  /* simple on/off toggle */
+  .toggle-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid #1e1e1e;
+  }
+  .toggle-row span { font-size: 14px; }
+  .switch {
+    width: 40px; height: 22px; background: #333; border-radius: 12px;
+    position: relative; cursor: pointer; flex-shrink: 0;
+  }
+  .switch.on { background: #c0392b; }
+  .switch::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+    background: #fff; border-radius: 50%; transition: left 0.15s ease;
+  }
+  .switch.on::after { left: 20px; }
+
+  /* multi-option select group (e.g. magazine state) */
+  .option-btn {
+    display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 6px;
+    background: #1a1a1a; border: 1px solid #262626; color: #ccc; cursor: pointer;
+    font-size: 13px; border-radius: 3px;
+  }
+  .option-btn.active { border-color: #c0392b; color: #fff; background: #201414; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="canvas-container">
+    <div id="loading">LOADING MODEL...</div>
+    <div id="rotate-hint">click &amp; drag to rotate — scroll to zoom</div>
+  </div>
+
+  <div id="panel">
+    <h2>COMPONENTS</h2>
+    <div id="groups"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* ============================================================
+   CONFIG — maps toggle UI to the ACTUAL node names inside your
+   .glb file. These names came directly from inspecting your file:
+   "m5scw stock_17", "m5scw iron sights_20", and the two magazine
+   variants. Add more groups the same way for any other part.
+   ============================================================ */
+
+const MODEL_PATH = 'model.glb';
+
+// type: "toggle"  -> simple on/off switch, shows/hides one or more nodes
+// type: "select"  -> pick one option from a list (e.g. mag loaded / empty / none);
+//                    only the chosen option's nodes are visible, others in the group are hidden
+const TOGGLE_GROUPS = [
+  {
+    id: 'stock',
+    label: 'Stock',
+    type: 'toggle',
+    nodeNames: ['m5scw stock_17'],
+    defaultOn: true
+  },
+  {
+    id: 'sights',
+    label: 'Iron Sights',
+    type: 'toggle',
+    nodeNames: ['m5scw iron sights_20'],
+    defaultOn: true
+  },
+  {
+    id: 'magazine',
+    label: 'Magazine',
+    type: 'select',
+    options: [
+      { value: 'none',   label: 'None',              nodeNames: [] },
+      { value: 'loaded', label: 'Loaded (30rnd)',     nodeNames: ['55645 ar15 30rnd mag (pmag)_18'] },
+      { value: 'empty',  label: 'Empty (30rnd)',      nodeNames: ['55645 ar15 30rnd mag empty (pmag)_19'] }
+    ],
+    default: 'loaded'
+  }
+];
+
+/* ============================================================
+   3D SCENE SETUP
+   ============================================================ */
+const container = document.getElementById('canvas-container');
+const loadingEl = document.getElementById('loading');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a1a);
+
+function getSize() { return { w: container.clientWidth, h: container.clientHeight }; }
+const { w, h } = getSize();
+
+const camera = new THREE.PerspectiveCamera(35, w / h, 0.01, 1000);
+camera.position.set(0.6, 0.25, 0.6);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(w, h);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const key = new THREE.DirectionalLight(0xffffff, 1.4);
+key.position.set(2, 3, 2);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+fill.position.set(-2, 1, -1.5);
+scene.add(fill);
+
+let modelRoot = null;
+const nodeCache = {}; // name -> Object3D, filled once the model loads
+
+new GLTFLoader().load(
+  MODEL_PATH,
+  (gltf) => {
+    modelRoot = gltf.scene;
+
+    // Index every named node once, so toggles are instant lookups afterward
+    modelRoot.traverse((obj) => {
+      if (obj.name) nodeCache[obj.name] = obj;
+    });
+
+    // Center + scale to fit view
+    const box = new THREE.Box3().setFromObject(modelRoot);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const scale = 0.9 / size.length();
+    modelRoot.scale.setScalar(scale);
+    modelRoot.position.sub(center.multiplyScalar(scale));
+
+    scene.add(modelRoot);
+    loadingEl.style.display = 'none';
+
+    applyAllGroupStates(); // apply default on/off + default select values
+  },
+  undefined,
+  (err) => {
+    loadingEl.textContent = 'MODEL FAILED TO LOAD — check MODEL_PATH';
+    console.error(err);
+  }
+);
+
+/* ============================================================
+   TOGGLE LOGIC — set visibility on the real nodes by name
+   ============================================================ */
+const state = {}; // groupId -> boolean (toggle) or string value (select)
+
+TOGGLE_GROUPS.forEach(g => {
+  state[g.id] = g.type === 'toggle' ? g.defaultOn : g.default;
+});
+
+function setNodesVisible(nodeNames, visible) {
+  nodeNames.forEach(name => {
+    const node = nodeCache[name];
+    if (node) node.visible = visible;
+    else console.warn(`Node "${name}" not found in model — check the exact name/spelling.`);
+  });
+}
+
+function applyGroupState(group) {
+  if (group.type === 'toggle') {
+    setNodesVisible(group.nodeNames, state[group.id]);
+  } else if (group.type === 'select') {
+    group.options.forEach(opt => {
+      setNodesVisible(opt.nodeNames, opt.value === state[group.id]);
+    });
+  }
+}
+
+function applyAllGroupStates() {
+  TOGGLE_GROUPS.forEach(applyGroupState);
+}
+
+/* ============================================================
+   BUILD THE RIGHT-SIDE PANEL from TOGGLE_GROUPS
+   ============================================================ */
+const groupsEl = document.getElementById('groups');
+
+TOGGLE_GROUPS.forEach(group => {
+  const wrap = document.createElement('div');
+  wrap.className = 'group';
+
+  const labelEl = document.createElement('div');
+  labelEl.className = 'group-label';
+  labelEl.textContent = group.label;
+  wrap.appendChild(labelEl);
+
+  if (group.type === 'toggle') {
+    const row = document.createElement('div');
+    row.className = 'toggle-row';
+    row.innerHTML = `<span>${group.label}</span>`;
+    const sw = document.createElement('div');
+    sw.className = 'switch' + (state[group.id] ? ' on' : '');
+    sw.addEventListener('click', () => {
+      state[group.id] = !state[group.id];
+      sw.classList.toggle('on', state[group.id]);
+      applyGroupState(group);
+    });
+    row.appendChild(sw);
+    wrap.appendChild(row);
+  }
+
+  if (group.type === 'select') {
+    group.options.forEach(opt => {
+      const btn = document.createElement('div');
+      btn.className = 'option-btn' + (state[group.id] === opt.value ? ' active' : '');
+      btn.textContent = opt.label;
+      btn.addEventListener('click', () => {
+        state[group.id] = opt.value;
+        wrap.querySelectorAll('.option-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        applyGroupState(group);
+      });
+      wrap.appendChild(btn);
+    });
+  }
+
+  groupsEl.appendChild(wrap);
+});
+
+/* ============================================================
+   RESIZE + RENDER LOOP
+   ============================================================ */
+window.addEventListener('resize', () => {
+  const { w, h } = getSize();
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+
+</body>
+</html>
